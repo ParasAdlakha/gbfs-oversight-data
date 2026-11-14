@@ -63,6 +63,8 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 || \
             gh release create "$tag" --title "GBFS snapshots $day (UTC)" \
               --notes "15-minute snapshots of public GBFS station_status feeds. Raw, uncleaned. See README." --latest=false
+          # data/static only exists on the day's first run (later runs skip it)
+          mkdir -p data/raw data/static
           files=$(find data/raw data/static -name '*.csv.gz' -type f)
           for f in $files; do
             # flatten the path into the asset name: raw_2026_11_14_1735_status.csv.gz
