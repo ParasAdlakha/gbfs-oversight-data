@@ -157,6 +157,9 @@ def main():
     out = Path(args.out)
     systems = [r for r in csv.DictReader(open(args.catalogue, encoding="utf-8"))
                if not r["Authentication Type"].strip() and r["Auto-Discovery URL"].strip()]
+    # The catalogue lists a few systems twice; poll each once.
+    seen: set[str] = set()
+    systems = [r for r in systems if not (r["System ID"] in seen or seen.add(r["System ID"]))]
     if args.limit:
         systems = systems[: args.limit]
     state_path = out / "state" / "discovery.json"
