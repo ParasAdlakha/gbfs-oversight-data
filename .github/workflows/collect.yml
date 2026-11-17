@@ -1,10 +1,13 @@
 name: collect-gbfs
 
-# Every 15 minutes: snapshot every public GBFS system and attach the files to a
-# per-day GitHub Release (data-YYYY-MM-DD), so the repository itself stays small.
+# Snapshot every public GBFS system about every 15 minutes and attach the files to
+# a per-day GitHub Release (data-YYYY-MM-DD), so the repository itself stays small.
+# GitHub drops many scheduled runs, so the schedule fires every 5 minutes and a
+# gate skips any run within 12 minutes of the last stored snapshot. A laptop task
+# also dispatches runs; the same gate keeps the cadence near 15 minutes.
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -19,11 +22,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
+      - name: Skip if the last snapshot is under 12 minutes old
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          now=$(date -u +%s)
+          last=0
+          for day in "$(date -u +%Y-%m-%d)" "$(date -u -d '-1 day' +%Y-%m-%d)"; do
+            stamp=$(gh release view "data-$day" --json assets -q '.assets[].name' 2>/dev/null \
+                    | grep -oE '^raw_[0-9]{4}_[0-9]{2}_[0-9]{2}_[0-9]{4}_feeds' | sort | tail -1 || true)
+            if [ -n "$stamp" ]; then
+              y=${stamp:4:4}; m=${stamp:9:2}; d=${stamp:12:2}; hh=${stamp:15:2}; mm=${stamp:17:2}
+              last=$(date -u -d "$y-$m-$d $hh:$mm" +%s)
+              break
+            fi
+          done
+          age=$(( now - last ))
+          echo "last snapshot ${age}s ago"
+          if [ "$age" -lt 720 ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; else echo "skip=false" >> "$GITHUB_OUTPUT"; fi
+
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip == 'false'
         with:
           sparse-checkout: collector
 
       - name: Restore discovery cache
+        if: steps.gate.outputs.skip == 'false'
         uses: actions/cache/restore@v4
         with:
           path: data/state
@@ -31,10 +57,12 @@ jobs:
           restore-keys: discovery-
 
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip == 'false'
         with:
           python-version: "3.12"
 
       - name: Snapshot all systems
+        if: steps.gate.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -47,13 +75,14 @@ jobs:
           python -I collector/collect.py --out data $skip | tee data/run.json
 
       - name: Save discovery cache
-        if: always()
+        if: steps.gate.outputs.skip == 'false'
         uses: actions/cache/save@v4
         with:
           path: data/state
           key: discovery-${{ github.run_id }}
 
       - name: Attach snapshot to the day's release
+        if: steps.gate.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
