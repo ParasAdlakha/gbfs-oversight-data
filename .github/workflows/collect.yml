@@ -99,5 +99,10 @@ jobs:
             # flatten the path into the asset name: raw_2026_11_14_1735_status.csv.gz
             name=$(echo "${f#data/}" | tr '/' '_')
             cp "$f" "$name"
-            gh release upload "$tag" "$name" --clobber
+            # GitHub's upload server occasionally returns a transient 404/5xx; retry before giving up
+            for attempt in 1 2 3; do
+              gh release upload "$tag" "$name" --clobber && break
+              [ "$attempt" = 3 ] && exit 1
+              echo "upload of $name failed (attempt $attempt), retrying"; sleep $((attempt * 15))
+            done
           done
